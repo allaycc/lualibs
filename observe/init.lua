@@ -320,20 +320,22 @@ function M.start(opts)
     package = make_package_proxy(),
   }
 
-  if _G.shell then
-    shell_proxy = setmetatable({}, { __index = _G.shell })
-    shell_proxy.run = observed_shell_run
-    shell_proxy.getRunningProgram = function()
-      if current_program then
-        return current_program
-      end
-      if _G.shell.getRunningProgram then
-        return _G.shell.getRunningProgram()
-      end
-      return nil
+  shell_proxy = setmetatable({}, { __index = _G.shell or {} })
+  shell_proxy.run = observed_shell_run
+  shell_proxy.getRunningProgram = function()
+    if current_program ~= nil then
+      return current_program
     end
-    env_base.shell = shell_proxy
+    if _G.shell and _G.shell.getRunningProgram then
+      local ok, program = pcall(_G.shell.getRunningProgram)
+      if ok and program ~= nil then return program end
+    end
+    return opts.running_program or ""
   end
+  shell_proxy.resolveProgram = function(command)
+    return resolve_program(command)
+  end
+  env_base.shell = shell_proxy
 
   env = setmetatable(env_base, { __index = _G })
   -- Some CC/Lua environments expose `_ENV` as a normal global lookup inside

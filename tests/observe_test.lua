@@ -204,6 +204,28 @@ check("package proxy write captured", "/package-path.txt", m15.writes[1].path)
 check("package proxy path content", "sha:7", m15.writes[1].sha256)
 _G.package = original_package
 
+-- ---------- shell proxy exists even when CraftOS omits global shell ----------
+files = {
+  ["/child.lua"] = { content = "return true" },
+}
+_G.shell = nil
+local s16 = observe.start({ running_program = "basalt" })
+check("fallback shell proxy exists", "table", type(s16.env.shell))
+local fn16 = assert(load([[
+  local f = fs.open("/shell-program.txt", "w")
+  f.write(shell.getRunningProgram())
+  f.close()
+
+  local resolved = shell.resolveProgram("/child.lua")
+  local r = fs.open("/resolved.txt", "w")
+  r.write(resolved or "nil")
+  r.close()
+]], "installer", "t", s16.env))
+fn16()
+local m16 = s16:finish()
+check("fallback shell running program", "sha:6", m16.writes[1].sha256)
+check("fallback shell resolve program", "sha:10", m16.writes[2].sha256)
+
 -- ---------- shell.run local scripts inherit observed env ----------
 files = {
   ["/child.lua"] = {
