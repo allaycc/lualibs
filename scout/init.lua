@@ -483,6 +483,77 @@ end
 -- High-level: spec → synthesized package + source
 -- ---------------------------------------------------------------------------
 
+-- Default filenames checked when peeking for foreign installers. Callers
+-- can override with opts.installer_names. Repo-name-prefixed variants
+-- (foo_installer.lua) are tried automatically by peek_installer.
+M.DEFAULT_INSTALLER_NAMES = {
+  "vim_installer.lua",
+  "install.lua",
+  "installer.lua",
+  "setup.lua",
+}
+
+-- Cheap "is there a foreign installer in this repo?" check.
+--
+-- Hits the GitHub trees API once, scans root-level filenames for installer
+-- patterns, and if one matches, fetches *just that file*. No require-scan,
+-- no per-file fetches for the rest of the tree. ~2 HTTP calls total even
+-- for a 2000-file repo.
+--
+-- Returns (peek, err) where peek has:
+--   user, repo, ref          - the parsed spec components
+--   tree                     - the full trees response (for reuse by bundle)
+--   installer                - { path, source } if a matching file was found
+--                              (source is the file body fetched from raw)
+function M.peek_installer(spec, opts)
+  opts = opts or {}
+  local parsed, perr = M.parse(spec)
+  if not parsed then return nil, perr end
+
+  local entries, ref, fetch_err = M.fetch_tree(
+    parsed.user, parsed.repo, parsed.ref)
+  if not entries then return nil, fetch_err end
+
+  local names = opts.installer_names or M.DEFAULT_INSTALLER_NAMES
+  -- Build a set of root-level paths for O(1) lookup.
+  local at_root = {}
+  for _, e in ipairs(entries) do
+    if e.type == "blob" and not e.path:find("/") then
+      at_root[e.path:lower()] = e.path
+    end
+  end
+
+  -- Try the explicit candidates plus a repo-name-prefixed variant.
+  local repo_prefixed = parsed.repo:lower() .. "_installer.lua"
+  local candidates = { table.unpack and table.unpack(names) or unpack(names) }
+  table.insert(candidates, repo_prefixed)
+
+  local found_path
+  for _, cand in ipairs(candidates) do
+    if at_root[cand:lower()] then
+      found_path = at_root[cand:lower()]
+      break
+    end
+  end
+
+  local peek = {
+    user = parsed.user,
+    repo = parsed.repo,
+    ref = ref,
+    tree = entries,
+  }
+  if found_path then
+    local url = M.raw_base(parsed.user, parsed.repo, ref) .. "/" .. found_path
+    local body, err = transport.fetch(url)
+    if not body then
+      return nil, "github: failed to fetch installer " .. found_path
+        .. ": " .. (err or "?")
+    end
+    peek.installer = { path = found_path, source = body }
+  end
+  return peek
+end
+
 -- Take a "gh:user/repo[@ref]" spec and produce a synthesized package + source
 -- ready to feed to the resolver/installer.
 --
@@ -490,22 +561,38 @@ end
 --                 external dependencies (typically: every package name across
 --                 the user's configured sources).
 --
+-- opts.tree (optional): a prebuilt tree from peek_installer, to skip the
+--                       trees-API call when we've already done it.
+-- opts.scan_requires (default true): set false to skip per-file require
+--                       scanning (much faster, but no detected_deps output).
+--
 -- Returns (pkg, source, info, err).
-function M.bundle(spec, known_packages)
+function M.bundle(spec, known_packages, opts)
+  opts = opts or {}
   local parsed, perr = M.parse(spec)
   if not parsed then return nil, nil, nil, perr end
 
-  local entries, ref, fetch_err = M.fetch_tree(
-    parsed.user, parsed.repo, parsed.ref)
-  if not entries then return nil, nil, nil, fetch_err end
+  local entries, ref
+  if opts.tree then
+    entries = opts.tree
+    ref = parsed.ref or "main"
+  else
+    local fetch_err
+    entries, ref, fetch_err = M.fetch_tree(
+      parsed.user, parsed.repo, parsed.ref)
+    if not entries then return nil, nil, nil, fetch_err end
+  end
+
+  local scan = opts.scan_requires
+  if scan == nil then scan = true end
 
   known_packages = known_packages or {}
   local pkg, info = M.synthesize(parsed.user, parsed.repo, ref, entries, {
-    scan_requires = true,
-    fetch_file = function(p)
+    scan_requires = scan,
+    fetch_file = scan and function(p)
       local url = M.raw_base(parsed.user, parsed.repo, ref) .. "/" .. p
       return (transport.fetch(url))
-    end,
+    end or nil,
     external_resolver = function(n)
       return known_packages[n] == true
     end,
