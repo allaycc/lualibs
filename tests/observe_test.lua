@@ -189,6 +189,7 @@ local original_package = _G.package
 _G.package = nil
 files = {}
 local s15 = observe.start()
+check("observed env exposes _ENV", s15.env, s15.env._ENV)
 local fn15 = assert(load([[
   local old_path = package.path
   package.path = "basalt;" .. old_path

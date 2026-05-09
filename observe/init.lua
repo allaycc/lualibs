@@ -304,6 +304,7 @@ function M.start(opts)
       child_env.loadfile = observed_loadfile
       child_env.dofile = observed_dofile
       setmetatable(child_env, { __index = env })
+      child_env._ENV = child_env
       local fn, err = observed_loadfile(path, "t", child_env)
       if not fn then return false, err end
       return with_running_program(path, fn, ...)
@@ -335,6 +336,10 @@ function M.start(opts)
   end
 
   env = setmetatable(env_base, { __index = _G })
+  -- Some CC/Lua environments expose `_ENV` as a normal global lookup inside
+  -- chunks. Installers may pass `_ENV` into nested load() calls; make that
+  -- resolve back to the observed env instead of nil/default globals.
+  env._ENV = env
   session.env = env
 
   -- Snapshot every captured write into the final manifest, deduping by
