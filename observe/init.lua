@@ -118,6 +118,17 @@ local function copy_args(args, start_at)
   return out
 end
 
+local function make_package_proxy()
+  local proxy = {}
+  if type(_G.package) == "table" then
+    for k, v in pairs(_G.package) do proxy[k] = v end
+  end
+  proxy.path = proxy.path or ""
+  proxy.loaded = proxy.loaded or {}
+  proxy.preload = proxy.preload or {}
+  return proxy
+end
+
 function M.start(opts)
   opts = opts or {}
   local real_fs = opts.fs or _G.fs
@@ -305,6 +316,7 @@ function M.start(opts)
     dofile = observed_dofile,
     http = http_proxy,
     os = os_proxy,
+    package = make_package_proxy(),
   }
 
   if _G.shell then

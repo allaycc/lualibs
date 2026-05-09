@@ -184,6 +184,25 @@ check("http fetch sha", "sha:7", m12.fetches[1].sha256)
 check("http fetched write captured", "/downloaded.lua", m12.writes[1].path)
 _G.http = nil
 
+-- ---------- package global is available even when CraftOS omits it ----------
+local original_package = _G.package
+_G.package = nil
+files = {}
+local s15 = observe.start()
+local fn15 = assert(load([[
+  local old_path = package.path
+  package.path = "basalt;" .. old_path
+  package.loaded.log = nil
+  local f = fs.open("/package-path.txt", "w")
+  f.write(package.path)
+  f.close()
+]], "installer", "t", s15.env))
+fn15()
+local m15 = s15:finish()
+check("package proxy write captured", "/package-path.txt", m15.writes[1].path)
+check("package proxy path content", "sha:7", m15.writes[1].sha256)
+_G.package = original_package
+
 -- ---------- shell.run local scripts inherit observed env ----------
 files = {
   ["/child.lua"] = {
