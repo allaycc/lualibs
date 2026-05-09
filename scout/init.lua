@@ -229,11 +229,11 @@ end
 function M.categorize(path, repo_name)
   local lower = path:lower()
 
-  -- Skip clutter.
+  -- Skip clutter that obviously isn't installable content.
   if lower:match("readme") or lower:match("license") or lower:match("changelog") then
     return "skip"
   end
-  if lower:match("%.md$") or lower:match("%.txt$") or lower:match("%.rst$") then
+  if lower:match("%.md$") or lower:match("%.rst$") then
     return "skip"
   end
   if lower:match("^%.") or lower:match("^%.vscode/") or lower:match("^%.github/") then
@@ -259,6 +259,15 @@ function M.categorize(path, repo_name)
     return "skip"
   end
 
+  -- Skip top-level dev metadata files that aren't part of the install.
+  if not path:find("/") then
+    if lower == "package.json" or lower == "package-lock.json"
+       or lower == "yarn.lock" or lower == "deno.json" or lower == "deno.lock"
+       or lower == ".luacheckrc" or lower == "tsconfig.json" then
+      return "skip"
+    end
+  end
+
   -- Bin scripts.
   if lower:match("^bin/") then return "bin" end
 
@@ -268,9 +277,21 @@ function M.categorize(path, repo_name)
   -- Lua source files default to lib.
   if lower:match("%.lua$") then return "lib" end
 
-  -- Images and data files go to share.
+  -- Vimscript runtime files (e.g. CCVim's runtime/) install alongside lib so
+  -- the package can find them relative to its install root.
+  if lower:match("%.vim$") or lower:match("%.vimrc$") then return "lib" end
+
+  -- Other data files the package may read at runtime — help text, indexes,
+  -- config JSON. Co-located with lib so apps that resolve paths relative to
+  -- their install root can find them.
+  if lower:match("%.txt$") or lower:match("%.json$")
+     or lower:match("%.idx$") then
+    return "lib"
+  end
+
+  -- Images and audio: shared assets.
   if lower:match("%.nfp$") or lower:match("%.nft$") or lower:match("%.bimg$")
-     or lower:match("%.png$") then
+     or lower:match("%.png$") or lower:match("%.dfpwm$") then
     return "share"
   end
 
