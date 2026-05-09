@@ -8,6 +8,7 @@ local tests = {
   "levenshtein_test",
   "ui_test",
   "scout_test",
+  "observe_test",
 }
 
 local total_pass, total_fail = 0, 0
