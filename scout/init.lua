@@ -493,6 +493,14 @@ M.DEFAULT_INSTALLER_NAMES = {
   "setup.lua",
 }
 
+local function is_probable_installer_name(path)
+  if path:find("/") then return false end
+  local lower = path:lower()
+  return lower:match("^install[%w%-%._]*%.lua$") ~= nil
+      or lower:match("^[%w%-%._]*installer[%w%-%._]*%.lua$") ~= nil
+      or lower:match("^setup[%w%-%._]*%.lua$") ~= nil
+end
+
 -- Cheap "is there a foreign installer in this repo?" check.
 --
 -- Hits the GitHub trees API once, scans root-level filenames for installer
@@ -515,24 +523,48 @@ function M.peek_installer(spec, opts)
   if not entries then return nil, fetch_err end
 
   local names = opts.installer_names or M.DEFAULT_INSTALLER_NAMES
-  -- Build a set of root-level paths for O(1) lookup.
+  -- Build lookup sets for exact paths and root-level filenames.
+  local by_path = {}
   local at_root = {}
   for _, e in ipairs(entries) do
-    if e.type == "blob" and not e.path:find("/") then
-      at_root[e.path:lower()] = e.path
+    if e.type == "blob" then
+      by_path[e.path:lower()] = e.path
+      if not e.path:find("/") then
+        at_root[e.path:lower()] = e.path
+      end
     end
   end
 
-  -- Try the explicit candidates plus a repo-name-prefixed variant.
+  -- Try exact installer paths first (used when updating an installer-driven
+  -- package and we already know which file was used).
+  local found_path
+  for _, cand in ipairs(opts.installer_paths or {}) do
+    if by_path[cand:lower()] then
+      found_path = by_path[cand:lower()]
+      break
+    end
+  end
+
+  -- Try the explicit root-level candidates plus a repo-name-prefixed variant.
   local repo_prefixed = parsed.repo:lower() .. "_installer.lua"
   local candidates = { table.unpack and table.unpack(names) or unpack(names) }
   table.insert(candidates, repo_prefixed)
 
-  local found_path
-  for _, cand in ipairs(candidates) do
-    if at_root[cand:lower()] then
-      found_path = at_root[cand:lower()]
-      break
+  if not found_path then
+    for _, cand in ipairs(candidates) do
+      if at_root[cand:lower()] then
+        found_path = at_root[cand:lower()]
+        break
+      end
+    end
+  end
+
+  if not found_path then
+    for _, e in ipairs(entries) do
+      if e.type == "blob" and is_probable_installer_name(e.path) then
+        found_path = e.path
+        break
+      end
     end
   end
 
@@ -575,7 +607,7 @@ function M.bundle(spec, known_packages, opts)
   local entries, ref
   if opts.tree then
     entries = opts.tree
-    ref = parsed.ref or "main"
+    ref = opts.ref or parsed.ref or "main"
   else
     local fetch_err
     entries, ref, fetch_err = M.fetch_tree(

@@ -337,6 +337,79 @@ local _, ref_source = github.bundle("gh:foo/bar@v1.2.3")
 check("bundle: explicit ref kept in source.id", "gh:foo/bar@v1.2.3",
   ref_source and ref_source.id)
 
+-- When bundle reuses a tree from peek_installer, the caller can pass the
+-- resolved default branch through so master-default repos don't drift to main.
+local _, master_source = github.bundle("gh:foo/mastered", {}, {
+  tree = {
+    { path = "init.lua", type = "blob", size = 100 },
+  },
+  ref = "master",
+  scan_requires = false,
+})
+check("bundle: reused tree keeps resolved ref", "gh:foo/mastered@master",
+  master_source and master_source.id)
+
+-- ---------------------------------------------------------------------------
+-- Installer detection
+-- ---------------------------------------------------------------------------
+
+_G._http_responses["https://api.github.com/repos/Minater247/CCVim/git/trees/rewrite-2026?recursive=1"] = [[
+{ "tree": [
+    { "path": "vim_installer.lua", "type": "blob", "size": 100 },
+    { "path": "instui.lua", "type": "blob", "size": 100 }
+  ]
+}
+]]
+_G._http_responses["https://raw.githubusercontent.com/Minater247/CCVim/rewrite-2026/vim_installer.lua"] =
+  "print('ccvim installer')\n"
+
+local ccvim_peek = github.peek_installer("gh:Minater247/CCVim@rewrite-2026")
+check("peek installer: CCVim ref", "rewrite-2026", ccvim_peek and ccvim_peek.ref)
+check("peek installer: CCVim path", "vim_installer.lua",
+  ccvim_peek and ccvim_peek.installer and ccvim_peek.installer.path)
+
+_G._http_responses["https://api.github.com/repos/Pyroxenium/Basalt2/git/trees/main?recursive=1"] = [[
+{ "tree": [
+    { "path": "install.lua", "type": "blob", "size": 100 },
+    { "path": "release/basalt-full.lua", "type": "blob", "size": 100 }
+  ]
+}
+]]
+_G._http_responses["https://raw.githubusercontent.com/Pyroxenium/Basalt2/main/install.lua"] =
+  "print('basalt installer')\n"
+
+local basalt_peek = github.peek_installer("Pyroxenium/Basalt2")
+check("peek installer: shorthand accepted", "install.lua",
+  basalt_peek and basalt_peek.installer and basalt_peek.installer.path)
+
+_G._http_responses["https://api.github.com/repos/foo/pattern/git/trees/main?recursive=1"] = [[
+{ "tree": [
+    { "path": "pattern_installer.lua", "type": "blob", "size": 100 }
+  ]
+}
+]]
+_G._http_responses["https://raw.githubusercontent.com/foo/pattern/main/pattern_installer.lua"] =
+  "print('pattern installer')\n"
+
+local pattern_peek = github.peek_installer("gh:foo/pattern")
+check("peek installer: root pattern fallback", "pattern_installer.lua",
+  pattern_peek and pattern_peek.installer and pattern_peek.installer.path)
+
+_G._http_responses["https://api.github.com/repos/foo/nested/git/trees/main?recursive=1"] = [[
+{ "tree": [
+    { "path": "scripts/install.lua", "type": "blob", "size": 100 }
+  ]
+}
+]]
+_G._http_responses["https://raw.githubusercontent.com/foo/nested/main/scripts/install.lua"] =
+  "print('nested installer')\n"
+
+local nested_peek = github.peek_installer("gh:foo/nested", {
+  installer_paths = { "scripts/install.lua" },
+})
+check("peek installer: exact nested path", "scripts/install.lua",
+  nested_peek and nested_peek.installer and nested_peek.installer.path)
+
 -- ---------------------------------------------------------------------------
 -- Done
 -- ---------------------------------------------------------------------------

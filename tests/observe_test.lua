@@ -131,6 +131,105 @@ check("installer wrote file path",    "/installed.lua", m7.writes[1].path)
 check("installer made 1 dir",         1,                #m7.dirs)
 check("installer made dir path",      "/lib",           m7.dirs[1])
 
+-- ---------- helper files inherit observed env ----------
+files = {
+  ["/helper.lua"] = {
+    content = [[
+      local f = fs.open("/from_helper.lua", "w")
+      f.write("helper")
+      f.close()
+    ]],
+  },
+}
+local s10 = observe.start()
+local fn10 = assert(load([[dofile("/helper.lua")]], "installer", "t", s10.env))
+fn10()
+local m10 = s10:finish()
+check("dofile helper write captured", 1,                  #m10.writes)
+check("dofile helper write path",     "/from_helper.lua", m10.writes[1].path)
+
+-- ---------- shell.getRunningProgram can be virtualized ----------
+_G.shell = { getRunningProgram = function() return "/bin/allay.lua" end }
+local s11 = observe.start({ running_program = "vim_installer.lua" })
+check("shell running program override", "vim_installer.lua",
+  s11.env.shell.getRunningProgram())
+_G.shell = nil
+
+-- ---------- http fetches are recorded ----------
+files = {}
+local http_bodies = { ["https://example.com/payload.lua"] = "payload" }
+_G.http = {
+  get = function(url)
+    return {
+      readAll = function() return http_bodies[url] end,
+      getResponseCode = function() return 200 end,
+      close = function() end,
+    }
+  end,
+}
+local s12 = observe.start()
+local fn12 = assert(load([[
+  local r = http.get("https://example.com/payload.lua")
+  local body = r.readAll()
+  r.close()
+  local f = fs.open("/downloaded.lua", "w")
+  f.write(body)
+  f.close()
+]], "installer", "t", s12.env))
+fn12()
+local m12 = s12:finish()
+check("http fetch captured", 1, #m12.fetches)
+check("http fetch url", "https://example.com/payload.lua", m12.fetches[1].url)
+check("http fetch sha", "sha:7", m12.fetches[1].sha256)
+check("http fetched write captured", "/downloaded.lua", m12.writes[1].path)
+_G.http = nil
+
+-- ---------- shell.run local scripts inherit observed env ----------
+files = {
+  ["/child.lua"] = {
+    content = [[
+      local dest = ...
+      local f = fs.open(dest, "w")
+      f.write(shell.getRunningProgram())
+      f.close()
+    ]],
+  },
+}
+_G.shell = { getRunningProgram = function() return "/parent.lua" end }
+local s13 = observe.start({ running_program = "/installer.lua" })
+local fn13 = assert(load([[shell.run("/child.lua", "/child-output.lua")]],
+  "installer", "t", s13.env))
+fn13()
+local m13 = s13:finish()
+check("shell.run captured", "/child.lua", m13.shell_runs[1].command)
+check("shell.run child write", "/child-output.lua", m13.writes[1].path)
+check("shell.run child running program", "sha:10", m13.writes[1].sha256)
+_G.shell = nil
+
+-- ---------- shell.run wget downloads through observed fs/http ----------
+files = {}
+http_bodies = { ["https://example.com/app.lua"] = "appbody" }
+_G.http = {
+  get = function(url)
+    return {
+      readAll = function() return http_bodies[url] end,
+      getResponseCode = function() return 200 end,
+      close = function() end,
+    }
+  end,
+}
+_G.shell = { getRunningProgram = function() return "/parent.lua" end }
+local s14 = observe.start()
+local fn14 = assert(load([[shell.run("wget", "https://example.com/app.lua", "/app.lua")]],
+  "installer", "t", s14.env))
+fn14()
+local m14 = s14:finish()
+check("wget shell run captured", "wget", m14.shell_runs[1].command)
+check("wget fetch captured", "https://example.com/app.lua", m14.fetches[1].url)
+check("wget write captured", "/app.lua", m14.writes[1].path)
+_G.http = nil
+_G.shell = nil
+
 -- ---------- dedupe writes to same path ----------
 files = {}
 local s8 = observe.start()
